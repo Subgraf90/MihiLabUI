@@ -1,0 +1,226 @@
+import sys
+import os
+import ast
+import time
+import subprocess
+import multiprocessing
+from qtpy import QtWidgets
+from ui.mainwindow import Ui_MainWindow
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib
+from qtpy.QtWidgets import QVBoxLayout
+from Functions.f_calc import db2mag, mag2db, deg2rad, db2spl, wavelength, wavenumber
+
+
+from data_module import DataContainer
+data_container_instance = DataContainer()
+
+
+
+class MplCanvas(FigureCanvas):
+    def __init__(self, parent=None, width=40, height=40, dpi=100):
+        self.fig, self.ax = plt.subplots(figsize=(width, height), dpi=dpi)
+        super(MplCanvas, self).__init__(self.fig)
+        self.setParent(parent)
+        self.data_x = None
+        self.data_y = None
+        self.init_plot()
+
+    def init_plot(self):
+        self.ax.set_title("SPL Plot")
+        self.ax.set_xlabel("X-Achse")
+        self.ax.set_ylabel("Y-Achse")
+
+    def update_plot(self, data_x, data_y):
+        self.data_x = data_x
+        self.data_y = data_y
+        self.ax.clear()
+        self.ax.plot(self.data_x, self.data_y)
+        self.ax.set_title("Neuer Plot-Titel")
+        self.ax.set_xlabel("Neue X-Achse")
+        self.ax.set_ylabel("Neue Y-Achse")
+        self.draw()
+        
+        # Vorbereiten des Dictionary Calculation
+        self.calculation = {
+            "sound_field_p": [],
+            "sound_field_x": [], 
+            "sound_field_y": [],
+            "spl_axis_x": [], 
+            "spl_axis_y": [],
+            }
+                 
+        self.draw = {
+            "line_vp_1": [], 
+            "line_vp_2": [],
+            }
+        
+        # Plot 1, Vorbereitung
+        fig_1 = plt.figure(figsize=(20, 15))
+        plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.9, wspace=0.3, hspace=0.3)
+        fig_1.suptitle("Simulation to optimize Soundfield @" + " Hz")
+        ax = fig_1.add_subplot(2, 2, 1)
+      
+
+        # plot SPL, sound field        
+        plt.imshow(mag2db(self.calculation['sound_field_p']),
+                   extent=[min(self.calculation['sound_field_x']), max(self.calculation['sound_field_x']),
+                           min(self.calculation['sound_field_y']), max(self.calculation['sound_field_y'])],
+                   cmap='jet', aspect='auto', )
+        
+        
+        # Daten und Achsengroesse eintragen
+        plt.title("SPL Plot Soundfield [dB]")
+        plt.xticks(np.arange(min(self.calculation['sound_field_x']), max(self.calculation['sound_field_x']), 10))
+        plt.yticks(np.arange(min(self.calculation['sound_field_y']), max(self.calculation['sound_field_y']), 10))
+        plt.axis('equal')
+        plt.clim(-42, 0)
+        plt.grid(color='w', linestyle='-', linewidth=0.4)
+        plt.colorbar(ticks=[-42, -36, -30, -24, -18, -12, -6, 0])
+        plt.xlabel("Length [m]")
+        plt.ylabel("Width [m]")
+
+        plt.show()
+        
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+
+
+        # ----- Data Import ------
+        # Importiere die DataContainer-Klasse
+        from data_module import DataContainer
+
+        # Erstelle eine Instanz der DataContainer-Klasse und setze die Einstellungen
+        self.data_container_instance = DataContainer()
+
+        # Rufe die Einstellungen aus DataContainer ab
+        self.settings = self.data_container_instance.get_settings()
+
+
+
+        # ----- Eingabe aus der UI -----
+        # Start des Skripts aus UI
+        self.ui.StartSkript.clicked.connect(self.starte_skript)
+
+        # Auswahl für Lautsprechertyp
+        self.ui.Speakerspecs.currentIndexChanged.connect(self.on_speakerspecs_changed)
+
+        # Auswahl der Array Länge
+        self.ui.SourceLength.valueChanged.connect(self.on_SourceLength_changed)
+
+        # Auswahl des Oeffnungswinkels
+        self.ui.ArcAngle.valueChanged.connect(self.on_ArcAngle_changed)
+
+        # Auswahl für Lautsprechertyp
+        self.ui.ArcShape.currentIndexChanged.connect(self.on_ArcShape_changed)   
+
+        # Auswahl der berechneten Frequenz
+        self.ui.FreqBandwith.currentIndexChanged.connect(self.on_FreqBandwith_changed)  
+
+
+
+        # ---- Grafikausgabe -----
+        # Füge das Matplotlib-Canvas als Attribut hinzu
+        self.matplotlib_canvas = MplCanvas(self)
+        
+        # Erstelle ein Layout für das Container-Widget
+        layout = QtWidgets.QVBoxLayout(self.ui.SPLPlot)
+        
+        # Setze das Layout für das Container-Widget
+        self.ui.SPLPlot.setLayout(layout)
+        
+        # Füge das Matplotlib-Canvas zum Layout hinzu
+        layout.addWidget(self.matplotlib_canvas)
+
+       
+        
+    def starte_skript(self):
+        try:
+            
+            from MihiLab_input import SoundFieldCalculator  # Geben Sie den tatsächlichen Pfad an
+            
+            # Hier verwenden Sie die bestehende Instanz der DataContainer-Klasse
+            data_container = data_container_instance
+            
+            # Hier erstellen Sie eine Instanz der SoundFieldCalculator-Klasse und übergeben Einstellungen und DataContainer
+            calculator_instance = SoundFieldCalculator(data_container.get_settings(), data_container)
+            
+            # Hier können Sie die Berechnung starten
+            calculator_instance.calculate_sound_field()
+            
+            # Hier speichern Sie die berechneten Daten in der DataContainer-Instanz
+            calculator_instance.save_data_to_container()
+            
+            # Hier können Sie auf die gespeicherten Daten zugreifen
+            print("Saved calculation in DataContainer:", data_container.get_calculation())
+            
+            # self.matplotlib_canvas.update_plot(self.data['result_data_x'], self.data['result_data_y'])
+
+        except Exception as e:
+            print(f"Fehler beim Ausführen des Skripts: {e}")
+
+            
+    
+
+
+    def on_speakerspecs_changed(self, text):
+        # Lautsprechertyp. Hier wird der ausgewählte Text im Dropdown-Menü ausgegeben und im Dictionary "settings" eingetragen
+        print(f"{text}")
+        self.settings['source_polar_pattern'] = text
+
+    def on_SourceLength_changed(self, text):
+        # Array Länge. Hier wird der ausgewählte Wert im Dictionary "settings" eingetragen
+        print(f"{text}")
+        self.settings['source_length'] = text
+        
+    def on_ArcAngle_changed(self, text):
+       # Oeffnungswinkel. Hier wird der ausgewählte Wert im Dictionary "settings" eingetragen
+       print(f"{text}")
+       self.settings['arc_angle'] = text            
+       
+    def on_ArcShape_changed(self, text):
+       # ArcForm. Hier wird der ausgewählte Wert im Dictionary "settings" eingetragen
+       print(f"{text}")
+       if text == 0:
+           text = 'c'
+       elif text == 1:
+           text = 'p'
+       self.settings['arc_shape'] = text
+       
+    def on_FreqBandwith_changed(self, text):
+       # Berechnete Frequenz. Hier wird der ausgewählte Wert im Dictionary "settings" eingetragen
+       print(f"{text}")
+       if text == 0:
+           text = '80'
+       elif text == 1:
+           text = '63'
+       elif text == 2:
+           text = '50'
+       elif text == 3:
+           text = '40'
+       elif text == 4:
+           text = '31.5' 
+       elif text == 5:
+           text = '25'               
+       self.settings['calculate_frequency'] = text 
+       
+       
+           
+       
+       
+
+    #def update_plot(self, new_data_x, new_data_y):
+        #self.matplotlib_canvas.update_plot(new_data_x, new_data_y)
+    
+    
+if __name__ == "__main__":
+    app = QtWidgets.QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
